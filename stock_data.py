@@ -4,8 +4,9 @@ import pandas as pd
 
 
 class StockDataStore:
-    def __init__(self, ticker: str):
+    def __init__(self, ticker: str, outlier_threshold: float = 5.0):
         self.ticker = ticker
+        self.outlier_threshold = outlier_threshold / 100.0
         self._raw: Optional[pd.DataFrame] = None
         self._outliers: Optional[pd.DataFrame] = None
         self._store: Optional[pd.DataFrame] = None
@@ -35,7 +36,7 @@ class StockDataStore:
 
         self._preprocess_data()
 
-        # self._store = self._raw.copy()
+        self._store = self._raw.copy()
 
     def _convert_currency_to_float(self, column: str):
         """Convert currency formatted strings to float in the specified column."""
@@ -51,11 +52,6 @@ class StockDataStore:
 
         # self._detect_and_handle_nulls()
         self._detect_and_handle_outliers()
-
-        if self._raw is None:
-            raise ValueError("Dataframe is empty. Load data first.")
-
-        self._store = self._raw.copy()
 
     def _detect_and_handle_nulls(self):
         """
@@ -121,10 +117,10 @@ class StockDataStore:
         daily_return = self._raw["Close"].pct_change().abs() * 100
 
         # High movement = top 5% of price changes
-        high_movement_threshold = daily_return.quantile(0.95)
+        high_movement_threshold = daily_return.quantile(1 - self.outlier_threshold)
 
         # Low volume = bottom 5% of volume
-        low_volume_threshold = self._raw["Volume"].quantile(0.5)
+        low_volume_threshold = self._raw["Volume"].quantile(0 + self.outlier_threshold)
 
         # Find rows with unusual pattern: big move + low volume
         high_movement = daily_return > high_movement_threshold
