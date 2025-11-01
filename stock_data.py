@@ -1,5 +1,6 @@
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 
@@ -38,6 +39,120 @@ class StockDataStore:
 
         self._store = self._raw.copy()
 
+    def _preprocess_data(self):
+        self._add_simple_features()
+        self._detect_and_handle_outliers()
+
+    def _add_simple_features(self):
+        """Add very basic helper columns."""
+
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        # 1) Log return of Close (safer than raw %)
+        ret = np.log(self._raw["Close"] / self._raw["Close"].shift(1)).fillna(0.0)
+        self._raw["return"] = ret
+
+        # 2) Intraday range as a simple quality signal
+        hl_range = (self._raw["High"] - self._raw["Low"]) / self._raw["Close"].shift(
+            1
+        ).fillna(0.0)
+        self._raw["hl_range"] = hl_range
+
+    def _detect_and_handle_outliers(self):
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        self._raw["is_outlier"] = False
+        self._raw["outlier_desc"] = ""
+
+        # 1) Make sure data is consistent: Open|High|Close|Low -> Making sure no impossible values exist
+        self._detect_inconsistencies()
+
+        # 2) Univariate IQR for all numerical columns -> flag as outlier for comparison with large sentiment moves
+        self._detect_univariate_outliers()
+
+        # 3) Simple multivariate outlier detection: big move + low volume -> quarantine
+        self._detect_and_quarantine_multivariate_outliers()
+
+    def _detect_inconsistencies(self):
+        """Drop rows where OHLC relationship is impossible."""
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        ok = (
+            (self._raw["Low"] <= self._raw[["Open", "Close"]].min(axis=1))
+            & (self._raw["High"] >= self._raw[["Open", "Close"]].max(axis=1))
+            & (self._raw["Low"] <= self._raw["High"])
+        )
+
+        bad_idx = ~ok
+
+        if bad_idx.any():
+            removed = self._raw.loc[bad_idx].copy()
+            removed["is_outlier"] = True
+            removed["outlier_desc"] += "inconsistent_data;"
+            self._outliers = (
+                removed
+                if self._outliers is None
+                else pd.concat([self._outliers, removed], ignore_index=True)
+            )
+            self._raw = self._raw.loc[~bad_idx].reset_index(drop=True)
+
+    def _detect_univariate_outliers(self):
+        """Your original IQR method (unchanged)."""
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        numerical_cols = ["Open", "High", "Low", "Close", "Volume"]
+        for col in numerical_cols:
+            Q1 = self._raw[col].quantile(0.25)
+            Q3 = self._raw[col].quantile(0.75)
+
+            IQR = Q3 - Q1
+
+            lower = Q1 - 1.5 * IQR
+            upper = Q3 + 1.5 * IQR
+
+            idx = self._raw.index[(self._raw[col] < lower) | (self._raw[col] > upper)]
+
+            if len(idx) > 0:
+                self._raw.loc[idx, "is_outlier"] = True
+                self._raw.loc[idx, "outlier_desc"] += f"{col};"
+
+    def _detect_and_quarantine_multivariate_outliers(self):
+        """Quarantine 'big move + low volume' using simple percentiles, but on returns."""
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        # Absolute log return size
+        abs_ret = self._raw["return"].abs()
+
+        # High move = top (1 - threshold) quantile
+        high_move_thr = abs_ret.quantile(1 - self.outlier_threshold)
+
+        # Low volume = bottom threshold quantile
+        low_vol_thr = self._raw["Volume"].quantile(self.outlier_threshold)
+
+        high_move = abs_ret > high_move_thr
+        low_volume = self._raw["Volume"] < low_vol_thr
+        unusual_pattern = high_move & low_volume
+
+        if unusual_pattern.any():
+            removed = self._raw.loc[unusual_pattern].copy()
+            removed["is_outlier"] = True
+            removed["outlier_desc"] += "big_move_low_volume;"
+
+            # Append to Outliers DataFrame for quarantined data
+            self._outliers = (
+                removed
+                if self._outliers is None
+                else pd.concat([self._outliers, removed], ignore_index=True)
+            )
+
+            # Use boolean mask to filter out the unusual patterns from the main DataFrame
+            self._raw = self._raw.loc[~unusual_pattern].reset_index(drop=True)
+
     def _convert_currency_to_float(self, column: str):
         """Convert currency formatted strings to float in the specified column."""
         if self._raw is None:
@@ -47,105 +162,12 @@ class StockDataStore:
             self._raw[column].replace("[\\$,]", "", regex=True).astype(float)
         )
 
-    def _preprocess_data(self):
-        """Process the stock data by detecting outliers and scaling features."""
-
-        # self._detect_and_handle_nulls()
-        self._detect_and_handle_outliers()
-
     def _detect_and_handle_nulls(self):
         """
         Handle null values in the stock data.
         Handled by another teammate.
         """
         ...
-
-    def _detect_and_handle_outliers(self):
-        """Detect outliers and remove multivariate ones (bad data), flag univariate ones (real extremes)."""
-        if self._raw is None:
-            raise ValueError("Dataframe is empty. Load data first.")
-
-        self._raw["is_outlier"] = False
-        self._raw["outlier_location"] = ""
-
-        # Detect and flag univariate outliers (keep them for comparing with sentiment data)
-        self._detect_univariate_outliers()
-
-        # Detect and remove multivariate outliers (assuming bad data)
-        self._detect_and_remove_multivariate_outliers()
-
-    def _detect_univariate_outliers(self):
-        """Detect univariate outliers in the stock data using IQR method."""
-
-        if self._raw is None:
-            raise ValueError("Dataframe is empty. Load data first.")
-
-        numerical_cols = ["Open", "High", "Low", "Close", "Volume"]
-
-        outlier_indices = set()
-
-        for col in numerical_cols:
-            if col not in self._raw.columns:
-                continue
-
-            # Calculate IQR
-            Q1 = self._raw[col].quantile(0.25)
-            Q3 = self._raw[col].quantile(0.75)
-            IQR = Q3 - Q1
-
-            # Define outlier bounds
-            lower_bound = Q1 - 1.5 * IQR
-            upper_bound = Q3 + 1.5 * IQR
-
-            # Find outliers
-            col_outliers = self._raw[
-                (self._raw[col] < lower_bound) | (self._raw[col] > upper_bound)
-            ]
-
-            if not col_outliers.empty:
-                outlier_indices.update(col_outliers.index.tolist())
-                self._raw.loc[col_outliers.index, "is_outlier"] = True
-                self._raw.loc[col_outliers.index, "outlier_location"] += f"{col};"
-
-    def _detect_and_remove_multivariate_outliers(self):
-        """Detect and remove unusual patterns: large price moves with low volume."""
-
-        if self._raw is None:
-            raise ValueError("Dataframe is empty. Load data first.")
-
-        # Calculate daily return (absolute price movement %)
-        daily_return = self._raw["Close"].pct_change().abs() * 100
-
-        # High movement = top 5% of price changes
-        high_movement_threshold = daily_return.quantile(1 - self.outlier_threshold)
-
-        # Low volume = bottom 5% of volume
-        low_volume_threshold = self._raw["Volume"].quantile(0 + self.outlier_threshold)
-
-        # Find rows with unusual pattern: big move + low volume
-        high_movement = daily_return > high_movement_threshold
-        low_volume = self._raw["Volume"] < low_volume_threshold
-
-        unusual_pattern = high_movement & low_volume
-
-        outlier_indices = self._raw[unusual_pattern].index.tolist()
-
-        if len(outlier_indices) > 0:
-            # Store removed outliers
-            removed_outliers = self._raw.loc[outlier_indices].copy()
-
-            if self._outliers is None:
-                self._outliers = removed_outliers
-            else:
-                self._outliers = pd.concat(
-                    [self._outliers, removed_outliers], ignore_index=True
-                )
-
-            # Remove them from raw data
-            self._raw = self._raw.drop(outlier_indices).reset_index(drop=True)
-            print(f"Removed {len(outlier_indices)} rows with unusual patterns")
-        else:
-            print("No multivariate outliers detected")
 
 
 class DailyIndicatorCalculator:
