@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -54,8 +54,8 @@ class StockDataStore:
         self._raw["return"] = ret
 
         # 2) Intraday range as a simple quality signal
-        hl_range = (self._raw["High"] - self._raw["Low"]) / self._raw["Close"].shift(
-            1
+        hl_range = (
+            (self._raw["High"] - self._raw["Low"]) / self._raw["Close"].shift(1)
         ).fillna(0.0)
         self._raw["hl_range"] = hl_range
 
@@ -170,14 +170,135 @@ class StockDataStore:
         ...
 
 
-class DailyIndicatorCalculator:
+class DailyIndicatorStore:
     def __init__(self, stock_data: StockDataStore):
-        self._stock_raw = stock_data.data
-        self._indicators_raw = self._calculate_indicators()
+        self._stock_store = stock_data.data
+        self._raw = self._calculate_indicators()
+        self._store = self._normalize_indicators()
 
     @property
-    def data(self):
-        """Get the DataFrame with technical indicators."""
-        return self._indicators_raw
+    def normalized(self) -> pd.DataFrame:
+        return self._store
 
-    def _calculate_indicators(self): ...
+    @property
+    def raw(self) -> pd.DataFrame:
+        return self._raw
+
+    def _calculate_indicators(self) -> pd.DataFrame:
+        if self._stock_store is None or len(self._stock_store) == 0:
+            raise ValueError("Stock data is empty. Load data first.")
+
+        df_src = self._stock_store
+
+        # Create the indicator frame using the same index so we have one row per day
+        ind = pd.DataFrame(index=df_src.index)
+        ind["calculation_date"] = df_src["Date"]
+        ind["ticker"] = df_src["Ticker"]
+
+        close = cast(pd.Series, df_src["Close"])
+
+        # Simple moving averages (allow values from the start)
+        ind["sma_20"] = close.rolling(window=20, min_periods=1).mean()
+        ind["sma_50"] = close.rolling(window=50, min_periods=1).mean()
+
+        # RSI (use EMA-style smoothing so it fills from the start nicely)
+        ind["rsi_14"] = self._calculate_rsi(close, window=14)
+
+        # MACD (classic: macd line only; add signal if you want)
+        macd = self._calculate_macd(close)
+        ind["macd"] = macd
+
+        # Bollinger Bands (20-day, allow early values)
+        sma20 = close.rolling(window=20, min_periods=1).mean()
+        std20 = close.rolling(window=20, min_periods=1).std(ddof=0)
+        ind["bollinger_upper"] = sma20 + 2 * std20
+        ind["bollinger_lower"] = sma20 - 2 * std20
+
+        # Volatility 20d: rolling std of returns, annualized
+        ind["volatility_20d"] = df_src["return"].rolling(window=20, min_periods=1).std(
+            ddof=0
+        ) * np.sqrt(252)
+
+        # Reset index so it's a clean daily table
+        ind = ind.reset_index(drop=True)
+        return ind
+
+    def _calculate_rsi(self, series: pd.Series, window: int = 14) -> pd.Series:
+        # Use Wilder's RSI with EMA smoothing to avoid big NaN runs
+        delta = series.diff().fillna(0.0)
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+
+        avg_gain = gain.ewm(alpha=1 / window, adjust=False, min_periods=1).mean()
+        avg_loss = loss.ewm(alpha=1 / window, adjust=False, min_periods=1).mean()
+
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        return cast(pd.Series, rsi).fillna(0.0)
+
+    def _calculate_macd(self, series: pd.Series, fast: int = 12, slow: int = 26):
+        ema_fast = series.ewm(span=fast, adjust=False, min_periods=1).mean()
+        ema_slow = series.ewm(span=slow, adjust=False, min_periods=1).mean()
+        macd_line = ema_fast - ema_slow
+
+        return macd_line
+
+    def _normalize_indicators(self) -> pd.DataFrame:
+        """
+        Create normalized/relative versions of raw indicators.
+        - Keep raw columns as-is.
+        - Add easy-to-model relative features (ratios/positions).
+        """
+
+        if self._stock_store is None or len(self._stock_store) == 0:
+            raise ValueError("Stock data is empty. Load data first.")
+
+        if self._raw is None or len(self._raw) == 0:
+            raise ValueError("Indicator data is empty. Calculate indicators first.")
+
+        ind = self._raw.copy()
+
+        # Convenience aliases
+        close = self._stock_store["Close"]
+        sma20 = ind["sma_20"]
+        sma50 = ind["sma_50"]
+
+        # RSI to [0,1]
+        ind["rsi_14_norm"] = ind["rsi_14"] / 100.0
+
+        # Relative to moving averages (dimensionless)
+        ind["sma_20_ratio"] = (close / sma20.replace(0, np.nan)) - 1.0
+        ind["sma_50_ratio"] = (close / sma50.replace(0, np.nan)) - 1.0
+
+        # MACD as a percent of price (dimensionless)
+        ind["macd_pct"] = ind["macd"] / close.replace(0, np.nan)
+
+        # Bollinger position in band: roughly in [-1, +1]
+        std20 = (ind["bollinger_upper"] - ind["sma_20"]) / 2.0  # recover std20
+        denom = (2.0 * std20).replace(0, np.nan)
+        ind["bb_pos"] = (close - sma20) / denom
+
+        # Volatility z-score across the single ticker (optional but useful)
+        vol = ind["volatility_20d"]
+        ind["volatility_20d_z"] = (vol - vol.mean()) / (
+            vol.std(ddof=0) if vol.std(ddof=0) != 0 else np.nan
+        )
+
+        ind["rsi_14_norm"] = ind["rsi_14_norm"].clip(0, 1)
+        ind["bb_pos"] = ind["bb_pos"].clip(-3, 3)
+
+        for c in ["macd_pct", "sma_20_ratio", "sma_50_ratio"]:
+            ind[c] = ind[c].clip(-0.5, 0.5)
+
+        keep_cols = [
+            "calculation_date",
+            "ticker",
+            "rsi_14_norm",
+            "sma_20_ratio",
+            "sma_50_ratio",
+            "macd_pct",
+            "bb_pos",
+            "volatility_20d_z",
+        ]
+
+        return cast(pd.DataFrame, ind[keep_cols].copy())
