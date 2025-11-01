@@ -177,8 +177,12 @@ class DailyIndicatorStore:
         self._store = self._normalize_indicators()
 
     @property
-    def data(self) -> pd.DataFrame:
+    def normalized(self) -> pd.DataFrame:
         return self._store
+
+    @property
+    def raw(self) -> pd.DataFrame:
+        return self._raw
 
     def _calculate_indicators(self) -> pd.DataFrame:
         if self._stock_store is None or len(self._stock_store) == 0:
@@ -191,7 +195,7 @@ class DailyIndicatorStore:
         ind["calculation_date"] = df_src["Date"]
         ind["ticker"] = df_src["Ticker"]
 
-        close = df_src["Close"]
+        close = cast(pd.Series, df_src["Close"])
 
         # Simple moving averages (allow values from the start)
         ind["sma_20"] = close.rolling(window=20, min_periods=1).mean()
@@ -230,7 +234,7 @@ class DailyIndicatorStore:
 
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
-        return rsi.fillna(0.0)
+        return cast(pd.Series, rsi).fillna(0.0)
 
     def _calculate_macd(self, series: pd.Series, fast: int = 12, slow: int = 26):
         ema_fast = series.ewm(span=fast, adjust=False, min_periods=1).mean()
@@ -263,7 +267,6 @@ class DailyIndicatorStore:
         ind["rsi_14_norm"] = ind["rsi_14"] / 100.0
 
         # Relative to moving averages (dimensionless)
-        # Guard divide-by-zero with replace
         ind["sma_20_ratio"] = (close / sma20.replace(0, np.nan)) - 1.0
         ind["sma_50_ratio"] = (close / sma50.replace(0, np.nan)) - 1.0
 
