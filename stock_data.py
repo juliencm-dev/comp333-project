@@ -200,6 +200,7 @@ class DailyIndicatorStore:
         # Simple moving averages (allow values from the start)
         ind["sma_20"] = close.rolling(window=20, min_periods=1).mean()
         ind["sma_50"] = close.rolling(window=50, min_periods=1).mean()
+        ind["sma_200"] = close.rolling(window=200, min_periods=1).mean()
 
         # RSI (use EMA-style smoothing so it fills from the start nicely)
         ind["rsi_14"] = self._calculate_rsi(close, window=14)
@@ -262,6 +263,7 @@ class DailyIndicatorStore:
         close = self._stock_store["Close"]
         sma20 = ind["sma_20"]
         sma50 = ind["sma_50"]
+        sma200 = ind["sma_200"]
 
         # RSI to [0,1]
         ind["rsi_14_norm"] = ind["rsi_14"] / 100.0
@@ -269,6 +271,13 @@ class DailyIndicatorStore:
         # Relative to moving averages (dimensionless)
         ind["sma_20_ratio"] = (close / sma20.replace(0, np.nan)) - 1.0
         ind["sma_50_ratio"] = (close / sma50.replace(0, np.nan)) - 1.0
+
+        # Golden/Death cross
+        prev_above = sma50.shift(1) > sma200.shift(1)
+        curr_above = sma50 > sma200
+
+        ind["golden_cross"] = (~prev_above) & curr_above
+        ind["death_cross"] = prev_above & (~curr_above)
 
         # MACD as a percent of price (dimensionless)
         ind["macd_pct"] = ind["macd"] / close.replace(0, np.nan)
@@ -296,6 +305,8 @@ class DailyIndicatorStore:
             "rsi_14_norm",
             "sma_20_ratio",
             "sma_50_ratio",
+            "golden_cross",
+            "death_cross",
             "macd_pct",
             "bb_pos",
             "volatility_20d_z",
