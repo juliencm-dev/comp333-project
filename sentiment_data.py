@@ -25,8 +25,7 @@ class SentimentDataStore:
 
     def load_tweets(self):
         """
-        Load all CSV files from a directory, append them into a single DataFrame,
-        parse dates to YYYY-MM-DD, keep a whitelist of columns, then preprocess.
+        Load all tweets from the raw_tweets directory. Format Date and Keep desiered columns.
         """
         dir_path = Path("raw_tweets")
         csv_files = sorted(dir_path.glob("*.csv"))
@@ -37,7 +36,7 @@ class SentimentDataStore:
         for fp in csv_files:
             df = pd.read_csv(fp)
 
-            # Twitter format: "Mon Dec 21 15:46:05 +0000 2020" → use strict format first
+            # Twitter format: "Mon Dec 21 15:46:05 +0000 2020" -> From self scrapped tweets
             dt1 = pd.to_datetime(
                 df["Date"],
                 format="%a %b %d %H:%M:%S %z %Y",
@@ -45,13 +44,13 @@ class SentimentDataStore:
                 errors="coerce",
             )
 
-            # Fallback parse for any rows not matching the strict Twitter pattern
+            # Look for NaN and let Pandas infer the datetime conversion (Kaggle Data Set)
             mask = dt1.isna()
             if mask.any():
                 dt2 = pd.to_datetime(df.loc[mask, "Date"], utc=True, errors="coerce")
                 dt1[mask] = dt2
 
-            df["Date"] = dt1.dt.strftime("%Y-%m-%d")  # or use .dt.date
+            df["Date"] = dt1.dt.strftime("%Y-%m-%d")
             df["Ticker"] = self.ticker
             dfs.append(df)
 
@@ -67,7 +66,7 @@ class SentimentDataStore:
         else:
             self._store = cast(pd.DataFrame, all_df[keep_cols].copy())
 
-        # Sort and drop dupes by ID if present
+        # Sort by date and drop duplicates tweets with tweet ID
         self._store.sort_values("Date", inplace=True)
         self._store.drop_duplicates(subset=["ID"], inplace=True, keep="first")
         self._store.reset_index(drop=True, inplace=True)
