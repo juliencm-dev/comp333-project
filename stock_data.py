@@ -24,7 +24,6 @@ class StockDataStore:
 
     def load_from_csv(self, file_path):
         """Load stock data from a CSV file. CSV is coming from Nasdaq historical data export."""
-
         self._raw = pd.read_csv(file_path, parse_dates=["Date"])
         self._raw["Ticker"] = self.ticker
 
@@ -35,17 +34,8 @@ class StockDataStore:
         for col in ["Open", "High", "Low", "Close"]:
             self._convert_currency_to_float(col)
 
-        self._preprocess_data()
-
-        self._store = self._raw.copy()
-
-    def _preprocess_data(self):
-        self._add_simple_features()
-        self._detect_and_handle_outliers()
-
-    def _add_simple_features(self):
+    def add_simple_features(self):
         """Add very basic helper columns."""
-
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
 
@@ -59,7 +49,8 @@ class StockDataStore:
         ).fillna(0.0)
         self._raw["hl_range"] = hl_range
 
-    def _detect_and_handle_outliers(self):
+    def detect_and_handle_outliers(self):
+        """Detect and handle outliers in the stock data."""
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
 
@@ -67,15 +58,15 @@ class StockDataStore:
         self._raw["outlier_desc"] = ""
 
         # 1) Make sure data is consistent: Open|High|Close|Low -> Making sure no impossible values exist
-        self._detect_inconsistencies()
+        self.detect_inconsistencies()
 
         # 2) Univariate IQR for all numerical columns -> flag as outlier for comparison with large sentiment moves
-        self._detect_univariate_outliers()
+        self.detect_univariate_outliers()
 
         # 3) Simple multivariate outlier detection: big move + low volume -> quarantine
-        self._detect_and_quarantine_multivariate_outliers()
+        self.detect_and_quarantine_multivariate_outliers()
 
-    def _detect_inconsistencies(self):
+    def detect_inconsistencies(self):
         """Drop rows where OHLC relationship is impossible."""
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
@@ -99,8 +90,8 @@ class StockDataStore:
             )
             self._raw = self._raw.loc[~bad_idx].reset_index(drop=True)
 
-    def _detect_univariate_outliers(self):
-        """Your original IQR method (unchanged)."""
+    def detect_univariate_outliers(self):
+        """IQR method for univariate outlier detection."""
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
 
@@ -121,7 +112,7 @@ class StockDataStore:
                 prefix = np.where(self._raw.loc[idx, col] > upper, "high", "low")
                 self._raw.loc[idx, "outlier_desc"] += prefix + f"_{col.lower()};"
 
-    def _detect_and_quarantine_multivariate_outliers(self):
+    def detect_and_quarantine_multivariate_outliers(self):
         """Quarantine 'big move + low volume' using simple percentiles, but on returns."""
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
@@ -154,6 +145,19 @@ class StockDataStore:
             # Use boolean mask to filter out the unusual patterns from the main DataFrame
             self._raw = self._raw.loc[~unusual_pattern].reset_index(drop=True)
 
+    def detect_and_handle_nulls(self):
+        """
+        Handle null values in the stock data.
+        Handled by another teammate.
+        """
+        pass
+
+    def finalize(self):
+        """Finalize the data store by copying raw data to store."""
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+        self._store = self._raw.copy()
+
     def _convert_currency_to_float(self, column: str):
         """Convert currency formatted strings to float in the specified column."""
         if self._raw is None:
@@ -163,29 +167,27 @@ class StockDataStore:
             self._raw[column].replace("[\\$,]", "", regex=True).astype(float)
         )
 
-    def _detect_and_handle_nulls(self):
-        """
-        Handle null values in the stock data.
-        Handled by another teammate.
-        """
-        ...
-
 
 class DailyIndicatorStore:
     def __init__(self, stock_data: StockDataStore):
         self._stock_store = stock_data.data
-        self._raw = self._calculate_indicators()
-        self._store = self._normalize_indicators()
+        self._raw: Optional[pd.DataFrame] = None
+        self._store: Optional[pd.DataFrame] = None
 
     @property
     def normalized(self) -> pd.DataFrame:
+        if self._store is None:
+            raise ValueError("Normalized indicators not calculated yet.")
         return self._store
 
     @property
     def raw(self) -> pd.DataFrame:
+        if self._raw is None:
+            raise ValueError("Raw indicators not calculated yet.")
         return self._raw
 
-    def _calculate_indicators(self) -> pd.DataFrame:
+    def calculate_indicators(self):
+        """Calculate technical indicators from stock data."""
         if self._stock_store is None or len(self._stock_store) == 0:
             raise ValueError("Stock data is empty. Load data first.")
 
@@ -223,35 +225,14 @@ class DailyIndicatorStore:
 
         # Reset index so it's a clean daily table
         ind = ind.reset_index(drop=True)
-        return ind
+        self._raw = ind
 
-    def _calculate_rsi(self, series: pd.Series, window: int = 14) -> pd.Series:
-        # Use Wilder's RSI with EMA smoothing to avoid big NaN runs
-        delta = series.diff().fillna(0.0)
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-
-        avg_gain = gain.ewm(alpha=1 / window, adjust=False, min_periods=1).mean()
-        avg_loss = loss.ewm(alpha=1 / window, adjust=False, min_periods=1).mean()
-
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        return cast(pd.Series, rsi).fillna(0.0)
-
-    def _calculate_macd(self, series: pd.Series, fast: int = 12, slow: int = 26):
-        ema_fast = series.ewm(span=fast, adjust=False, min_periods=1).mean()
-        ema_slow = series.ewm(span=slow, adjust=False, min_periods=1).mean()
-        macd_line = ema_fast - ema_slow
-
-        return macd_line
-
-    def _normalize_indicators(self) -> pd.DataFrame:
+    def normalize_indicators(self):
         """
         Create normalized/relative versions of raw indicators.
         - Keep raw columns as-is.
         - Add easy-to-model relative features (ratios/positions).
         """
-
         if self._stock_store is None or len(self._stock_store) == 0:
             raise ValueError("Stock data is empty. Load data first.")
 
@@ -313,4 +294,24 @@ class DailyIndicatorStore:
             "volatility_20d_z",
         ]
 
-        return cast(pd.DataFrame, ind[keep_cols].copy())
+        self._store = cast(pd.DataFrame, ind[keep_cols].copy())
+
+    def _calculate_rsi(self, series: pd.Series, window: int = 14) -> pd.Series:
+        # Use Wilder's RSI with EMA smoothing to avoid big NaN runs
+        delta = series.diff().fillna(0.0)
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+
+        avg_gain = gain.ewm(alpha=1 / window, adjust=False, min_periods=1).mean()
+        avg_loss = loss.ewm(alpha=1 / window, adjust=False, min_periods=1).mean()
+
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        return cast(pd.Series, rsi).fillna(0.0)
+
+    def _calculate_macd(self, series: pd.Series, fast: int = 12, slow: int = 26):
+        ema_fast = series.ewm(span=fast, adjust=False, min_periods=1).mean()
+        ema_slow = series.ewm(span=slow, adjust=False, min_periods=1).mean()
+        macd_line = ema_fast - ema_slow
+
+        return macd_line

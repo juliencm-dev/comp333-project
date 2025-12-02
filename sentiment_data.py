@@ -31,7 +31,7 @@ class SentimentDataStore:
 
     def load_tweets(self):
         """
-        Load all tweets from the raw_tweets directory. Format Date and Keep desiered columns.
+        Load all tweets from the raw_tweets directory. Format Date and Keep desired columns.
         """
         dir_path = Path("raw_tweets")
         csv_files = sorted(dir_path.glob("*.csv"))
@@ -89,9 +89,7 @@ class SentimentDataStore:
         self._store.drop_duplicates(subset=["ID"], inplace=True, keep="first")
         self._store.reset_index(drop=True, inplace=True)
 
-        self._preprocess_data()
-
-    def _process_sentiment_scores(self):
+    def process_sentiment_scores(self):
         """Calculate sentiment scores for the stock data."""
         if self._store is None:
             raise ValueError("Dataframe is empty. Load data first.")
@@ -102,23 +100,14 @@ class SentimentDataStore:
             lambda x: analyzer.polarity_scores(x)["compound"]
         )
 
-    def _preprocess_data(self):
-        """Process the stock data by detecting outliers and scaling features."""
-        if self._store is None:
-            raise ValueError("Dataframe is empty. Load data first.")
-
-        self._detect_nulls()
-        self._process_sentiment_scores()
-        self._detect_outliers()
-
-    def _detect_nulls(self):
+    def detect_nulls(self):
         """
         Handle null values in the stock data.
         Handled by another teammate.
         """
-        ...
+        pass
 
-    def _detect_outliers(self):
+    def detect_outliers(self):
         """
         Daily z-score filter on Sentiment_Score.
         For each Date, compute z-scores and drop rows where |z| > 3.
@@ -162,21 +151,21 @@ class SentimentDataStore:
 class SentimentAggregateDataStore:
     def __init__(self, sentiment_data: SentimentDataStore):
         self._sentiment_df = sentiment_data.data
-        self._sentiment_aggregate_df = self._aggregate_sentiment_data()
+        self._sentiment_aggregate_df: Optional[pd.DataFrame] = None
 
     @property
     def data(self):
         """Get the DataFrame with technical indicators."""
         return self._sentiment_aggregate_df
 
-    def _aggregate_sentiment_data(self) -> pd.DataFrame:
+    def aggregate_sentiment_data(self):
         """
         Aggregate sentiment daily by platform ("Social Media" | "News") after outlier filtering.
         Produces:
-          - avg_news_sentiment, avg_social_sentiment
-          - news_volume, social_volume
-          - sentiment_variance_news, sentiment_variance_social
-          - extreme_sentiment_flag_news, extreme_sentiment_flag_social
+        - avg_news_sentiment, avg_social_sentiment
+        - news_volume, social_volume
+        - sentiment_variance_news, sentiment_variance_social
+        - extreme_sentiment_flag_news, extreme_sentiment_flag_social
         """
         if self._sentiment_df is None:
             raise ValueError("No sentiment data to aggregate.")
@@ -207,4 +196,4 @@ class SentimentAggregateDataStore:
 
         merged = merged.reset_index()
 
-        return merged
+        self._sentiment_aggregate_df = merged
