@@ -188,7 +188,7 @@ class SentimentDataStore:
 
         analyzer = SentimentIntensityAnalyzer()
 
-        self._store["Sentiment_Score"] = self._store["Text"].apply(
+        self._store["sentiment_score"] = self._store["text"].apply(
             lambda x: analyzer.polarity_scores(x)["compound"]
         )
 
@@ -200,7 +200,6 @@ class SentimentDataStore:
         if self._store is None:
             raise ValueError("Dataframe is empty. Load data first.")
 
-        # Example: Drop rows with null text or date
         self._store.dropna(subset=["text", "date"], inplace=True)
         self._store.reset_index(drop=True, inplace=True)
 
@@ -212,7 +211,7 @@ class SentimentDataStore:
         """
         if self._store is None:
             raise ValueError("Dataframe is empty. Load data first.")
-        if "Sentiment_Score" not in self._store.columns:
+        if "sentiment_score" not in self._store.columns:
             raise ValueError("Sentiment_Score not found.")
 
         # Compute within-day z-scores
@@ -223,8 +222,8 @@ class SentimentDataStore:
                 return pd.Series(0.0, index=s.index)
             return (s - mean) / std_deviation
 
-        self._store["sentiment_z"] = self._store.groupby("Date")[
-            "Sentiment_Score"
+        self._store["sentiment_z"] = self._store.groupby("date")[
+            "sentiment_score"
         ].transform(_zscore)
 
         # Identify outliers |z| > 3
@@ -268,22 +267,22 @@ class SentimentAggregateDataStore:
             raise ValueError("No sentiment data to aggregate.")
 
         df = self._sentiment_df.copy()
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df = df[df["Date"].notna()].copy()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df[df["date"].notna()].copy()
 
         # Daily, per-platform aggregates
         grouped = (
-            df.groupby([df["Date"].dt.date, "Platform"])["Sentiment_Score"]
+            df.groupby([df["date"].dt.date, "platform"])["sentiment_score"]
             .agg(avg_sentiment="mean", volume="count", variance=lambda s: s.var(ddof=0))
             .reset_index()
-            .rename(columns={"Date": "aggregate_date"})
+            .rename(columns={"date": "aggregate_date"})
         )
 
         # Extreme flag per day/platform based on mean magnitude (tunable threshold)
         grouped["extreme_sentiment_flag"] = grouped["avg_sentiment"].abs() > 0.8
 
         # Merge grouped data into single row per date combining platforms as columns
-        merged = grouped.pivot(index="aggregate_date", columns="Platform")
+        merged = grouped.pivot(index="aggregate_date", columns="platform")
 
         # Combine columns that are a combination of metric and platform into a single column name
         merged.columns = [

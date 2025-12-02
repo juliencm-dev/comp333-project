@@ -45,10 +45,10 @@ class StockDataStore:
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
 
-        self._raw["Label"] = np.where(
+        self._raw["label"] = np.where(
             self._raw["Close"] > self._raw["Close"].shift(1), "UP", "DOWN"
         )
-        self._raw["Label"].iloc[0] = "NEUTRAL"  # First day has no previous day
+        self._raw["label"].iloc[0] = "NEUTRAL"  # First day has no previous day
 
     def add_simple_features(self):
         """Add very basic helper columns."""
@@ -164,9 +164,29 @@ class StockDataStore:
     def detect_and_handle_nulls(self):
         """
         Handle null values in the stock data.
-        Handled by another teammate.
         """
-        pass
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        # --- Strategy 1: Stock Prices (Forward Fill) ---
+        # We use ffill() because if a price is missing, the last known price
+        # is the best estimate until a new trade occurs.
+        price_cols = ["Open", "High", "Low", "Close"]
+
+        # Only apply to columns that actually exist in the dataframe
+        cols_to_fix = [c for c in price_cols if c in self._raw.columns]
+
+        if cols_to_fix:
+            self._raw[cols_to_fix] = self._raw[cols_to_fix].ffill()
+
+            # Edge Case: If the very first row has NaNs, ffill won't fix them.
+            # We use bfill (backfill) as a fallback for the start of the dataset.
+            self._raw[cols_to_fix] = self._raw[cols_to_fix].bfill()
+
+        # --- Strategy 2: Trading Volume (Zero Imputation) ---
+        # Missing volume often indicates a market holiday or data gap where no trading occurred.
+        if "Volume" in self._raw.columns:
+            self._raw["Volume"] = self._raw["Volume"].fillna(0)
 
     def finalize(self):
         """Finalize the data store by copying raw data to store."""
