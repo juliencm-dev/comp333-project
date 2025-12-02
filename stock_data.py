@@ -118,7 +118,8 @@ class StockDataStore:
 
             if len(idx) > 0:
                 self._raw.loc[idx, "is_outlier"] = True
-                self._raw.loc[idx, "outlier_desc"] += f"{col};"
+                prefix = np.where(self._raw.loc[idx, col] > upper, "high", "low")
+                self._raw.loc[idx, "outlier_desc"] += prefix + f"_{col.lower()};"
 
     def _detect_and_quarantine_multivariate_outliers(self):
         """Quarantine 'big move + low volume' using simple percentiles, but on returns."""
