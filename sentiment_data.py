@@ -192,7 +192,7 @@ class SentimentDataStore:
             lambda x: analyzer.polarity_scores(x)["compound"]
         )
 
-    def detect_nulls(self):
+    def detect_and_handle_nulls(self):
         """
         Handle null values in the stock data.
         Handled by another teammate.
@@ -203,7 +203,7 @@ class SentimentDataStore:
         self._store.dropna(subset=["text", "date"], inplace=True)
         self._store.reset_index(drop=True, inplace=True)
 
-    def detect_outliers(self):
+    def detect_and_handle_outliers(self):
         """
         Daily z-score filter on Sentiment_Score.
         For each Date, compute z-scores and drop rows where |z| > 3.
