@@ -155,6 +155,7 @@ class SentimentDataStore:
 
             df.rename(columns={"ID": "id"}, inplace=True)
             df.rename(columns={"Date": "date"}, inplace=True)
+            df.rename(columns={"Text": "text"}, inplace=True)
 
             dfs.append(df)
 
