@@ -269,36 +269,57 @@ class SentimentAggregateDataStore:
 
     def aggregate_sentiment_data(self):
         """
-        Aggregate sentiment daily by platform.
+        Aggregate sentiment daily across ALL platforms (Twitter + Reddit combined).
+        Includes Weighted Sentiment (by interaction) and Total Interaction Volume.
         """
         if self._sentiment_df is None:
             raise ValueError("No sentiment data to aggregate.")
 
-        print("--- Aggregating Daily Sentiment ---")
+        print("--- Aggregating Daily Sentiment (Combined Platforms) ---")
 
         df = self._sentiment_df.copy()
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df[df["date"].notna()].copy()
 
-        # Daily, per-platform aggregates
+        # Pre-calculate Weighted Score
+        # We add 1 to interaction to avoid multiplying by 0 (every post counts at least a little)
+        df["weighted_score"] = df["sentiment_score"] * (df["interaction"] + 1)
+
+        # Daily aggregates (Group by Date ONLY)
         grouped = (
-            df.groupby([df["date"].dt.date, "platform"])["sentiment_score"]
-            .agg(avg_sentiment="mean", volume="count", variance=lambda s: s.var(ddof=0))
+            df.groupby(df["date"].dt.date)
+            .agg(
+                daily_avg_sentiment=("sentiment_score", "mean"),
+                sum_weighted_score=("weighted_score", "sum"),
+                daily_total_interactions=("interaction", "sum"),
+                daily_post_volume=("sentiment_score", "count"),
+                daily_sentiment_variance=("sentiment_score", lambda s: s.var(ddof=0)),
+            )
             .reset_index()
             .rename(columns={"date": "aggregate_date"})
         )
 
-        grouped["extreme_sentiment_flag"] = grouped["avg_sentiment"].abs() > 0.8
+        # Calculate the actual Weighted Average
+        # Formula: Sum(Score * Weight) / Sum(Weights)
+        # Weight = Interaction + 1
+        grouped["daily_weighted_sentiment"] = grouped["sum_weighted_score"] / (
+            grouped["daily_total_interactions"] + grouped["daily_post_volume"]
+        )
 
-        merged = grouped.pivot(index="aggregate_date", columns="platform")
+        # Extreme flag (based on the weighted sentiment)
+        grouped["daily_extreme_sentiment_flag"] = (
+            grouped["daily_weighted_sentiment"].abs() > 0.8
+        )
 
-        merged.columns = [
-            f"{metric}_{platform}".lower().replace(" ", "_")
-            for metric, platform in merged.columns
-        ]
+        # Drop intermediate calculation columns
+        grouped = grouped.drop(columns=["sum_weighted_score"])
 
-        merged = merged.reset_index()
-        self._sentiment_aggregate_df = merged
+        # Fill NaN variance (days with only 1 post have undefined variance) with 0
+        grouped["daily_sentiment_variance"] = grouped[
+            "daily_sentiment_variance"
+        ].fillna(0.0)
+
+        self._sentiment_aggregate_df = grouped
 
         print(
             f"\n✅ Aggregation Complete. Generated {len(self._sentiment_aggregate_df)} daily records."
