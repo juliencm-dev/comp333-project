@@ -40,6 +40,8 @@ class StockDataStore:
         for col in ["Open", "High", "Low", "Close"]:
             self._convert_currency_to_float(col)
 
+        self.add_simple_features()
+
     def label_data(self):
         """Label Stock Data with "UP or "DOWN" based on previous day's Close price."""
         if self._raw is None:
