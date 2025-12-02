@@ -2,6 +2,7 @@ from typing import Optional, cast
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm  # Import tqdm for consistency, though mostly used for lists
 
 
 class StockDataStore:
@@ -29,18 +30,30 @@ class StockDataStore:
 
     def load_stock_data(self):
         """Load stock data from a CSV file. CSV is coming from Nasdaq historical data export."""
+        print(f"--- Loading Stock Data for {self.ticker} ---")
         file_path = f"data/stock/{self.ticker}_historical.csv"
-        self._raw = pd.read_csv(file_path, parse_dates=["Date"])
-        self._raw["Ticker"] = self.ticker
 
-        self._raw.sort_values(by="Date", inplace=True)
-        self._raw.reset_index(drop=True, inplace=True)
+        try:
+            self._raw = pd.read_csv(file_path, parse_dates=["Date"])
+            self._raw["Ticker"] = self.ticker
 
-        # Convert currency columns to float
-        for col in ["Open", "High", "Low", "Close"]:
-            self._convert_currency_to_float(col)
+            self._raw.sort_values(by="Date", inplace=True)
+            self._raw.reset_index(drop=True, inplace=True)
 
-        self.add_simple_features()
+            # Convert currency columns to float
+            for col in ["Open", "High", "Low", "Close"]:
+                self._convert_currency_to_float(col)
+
+            self.add_simple_features()
+
+            print(f"\n✅ Stock Data Loaded. Total Rows: {len(self._raw)}")
+            print(
+                f"\n📅 Date Range: {self._raw['Date'].min().date()} to {self._raw['Date'].max().date()}"
+            )
+
+        except FileNotFoundError:
+            print(f"❌ Error: File not found at {file_path}")
+            raise
 
     def label_data(self):
         """Label Stock Data with "UP or "DOWN" based on previous day's Close price."""
@@ -51,6 +64,10 @@ class StockDataStore:
             self._raw["Close"] > self._raw["Close"].shift(1), "UP", "DOWN"
         )
         self._raw["label"].iloc[0] = "NEUTRAL"  # First day has no previous day
+
+        up_count = (self._raw["label"] == "UP").sum()
+        down_count = (self._raw["label"] == "DOWN").sum()
+        print(f"\n🏷️ Data Labeled. UP: {up_count}, DOWN: {down_count}")
 
     def add_simple_features(self):
         """Add very basic helper columns."""
@@ -72,17 +89,32 @@ class StockDataStore:
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
 
+        print("--- Detecting Stock Data Outliers ---")
+        initial_count = len(self._raw)
+
         self._raw["is_outlier"] = False
         self._raw["outlier_desc"] = ""
 
-        # 1) Make sure data is consistent: Open|High|Close|Low -> Making sure no impossible values exist
+        # 1) Make sure data is consistent
         self.detect_inconsistencies()
 
-        # 2) Univariate IQR for all numerical columns -> flag as outlier for comparison with large sentiment moves
+        # 2) Univariate IQR for all numerical columns
         self.detect_univariate_outliers()
 
-        # 3) Simple multivariate outlier detection: big move + low volume -> quarantine
+        # 3) Simple multivariate outlier detection
         self.detect_and_quarantine_multivariate_outliers()
+
+        # Summary
+        final_count = len(self._raw)
+        removed_count = initial_count - final_count
+
+        if self._outliers is not None:
+            print(f"\n🧹 Outlier Detection Complete. Removed {removed_count} rows.")
+            print(
+                f"\n📋 Outlier Reasons:\n{self._outliers['outlier_desc'].value_counts().to_string()}"
+            )
+        else:
+            print("\n✅ No outliers detected.")
 
     def detect_inconsistencies(self):
         """Drop rows where OHLC relationship is impossible."""
@@ -171,30 +203,31 @@ class StockDataStore:
             raise ValueError("Dataframe is empty. Load data first.")
 
         # --- Strategy 1: Stock Prices (Forward Fill) ---
-        # We use ffill() because if a price is missing, the last known price
-        # is the best estimate until a new trade occurs.
         price_cols = ["Open", "High", "Low", "Close"]
-
-        # Only apply to columns that actually exist in the dataframe
         cols_to_fix = [c for c in price_cols if c in self._raw.columns]
 
         if cols_to_fix:
-            self._raw[cols_to_fix] = self._raw[cols_to_fix].ffill()
-
-            # Edge Case: If the very first row has NaNs, ffill won't fix them.
-            # We use bfill (backfill) as a fallback for the start of the dataset.
-            self._raw[cols_to_fix] = self._raw[cols_to_fix].bfill()
+            null_count = self._raw[cols_to_fix].isna().sum().sum()
+            if null_count > 0:
+                print(
+                    f"\n⚠️ Found {null_count} missing price values. Applying Forward Fill."
+                )
+                self._raw[cols_to_fix] = self._raw[cols_to_fix].ffill()
+                self._raw[cols_to_fix] = self._raw[cols_to_fix].bfill()
 
         # --- Strategy 2: Trading Volume (Zero Imputation) ---
-        # Missing volume often indicates a market holiday or data gap where no trading occurred.
         if "Volume" in self._raw.columns:
-            self._raw["Volume"] = self._raw["Volume"].fillna(0)
+            vol_nulls = self._raw["Volume"].isna().sum()
+            if vol_nulls > 0:
+                print(f"\n⚠️ Found {vol_nulls} missing Volume values. Filling with 0.")
+                self._raw["Volume"] = self._raw["Volume"].fillna(0)
 
     def finalize(self):
         """Finalize the data store by copying raw data to store."""
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
         self._store = self._raw.copy()
+        print("\n✅ Stock Data Store Finalized.")
 
     def _convert_currency_to_float(self, column: str):
         """Convert currency formatted strings to float in the specified column."""
@@ -229,6 +262,7 @@ class DailyIndicatorStore:
         if self._stock_store is None or len(self._stock_store) == 0:
             raise ValueError("Stock data is empty. Load data first.")
 
+        print("--- Calculating Technical Indicators ---")
         df_src = self._stock_store
 
         # Create the indicator frame using the same index so we have one row per day
@@ -264,12 +298,11 @@ class DailyIndicatorStore:
         # Reset index so it's a clean daily table
         ind = ind.reset_index(drop=True)
         self._raw = ind
+        print(f"\n✅ Indicators Calculated. Columns: {list(self._raw.columns)}")
 
     def normalize_indicators(self):
         """
         Create normalized/relative versions of raw indicators.
-        - Keep raw columns as-is.
-        - Add easy-to-model relative features (ratios/positions).
         """
         if self._stock_store is None or len(self._stock_store) == 0:
             raise ValueError("Stock data is empty. Load data first.")
@@ -277,6 +310,7 @@ class DailyIndicatorStore:
         if self._raw is None or len(self._raw) == 0:
             raise ValueError("Indicator data is empty. Calculate indicators first.")
 
+        print("--- Normalizing Indicators ---")
         ind = self._raw.copy()
 
         # Convenience aliases
@@ -333,6 +367,7 @@ class DailyIndicatorStore:
         ]
 
         self._store = cast(pd.DataFrame, ind[keep_cols].copy())
+        print(f"\n✅ Normalization Complete. Final Feature Set: {keep_cols[2:]}")
 
     def _calculate_rsi(self, series: pd.Series, window: int = 14) -> pd.Series:
         # Use Wilder's RSI with EMA smoothing to avoid big NaN runs

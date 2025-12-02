@@ -115,7 +115,7 @@ class SentimentDataStore:
 
         # --- Statistics Output ---
         reddit_count = self._store[self._store["platform"] == "REDDIT"].shape[0]
-        print(f"✅ Reddit Data Loaded. Total Reddit Rows: {reddit_count}")
+        print(f"\n✅ Reddit Data Loaded. Total Reddit Rows: {reddit_count}")
 
     def load_tweets(self):
         """
@@ -178,8 +178,8 @@ class SentimentDataStore:
 
         # --- Statistics Output ---
         twitter_count = self._store[self._store["platform"] == "TWITTER"].shape[0]
-        print(f"✅ Twitter Data Loaded. Total Twitter Rows: {twitter_count}")
-        print(f"📊 Total Combined Rows: {self._store.shape[0]}")
+        print(f"\n✅ Twitter Data Loaded. Total Twitter Rows: {twitter_count}")
+        print(f"\n📊 Total Combined Rows: {self._store.shape[0]}")
 
     def process_sentiment_scores(self):
         """Calculate sentiment scores for the stock data."""
@@ -198,7 +198,7 @@ class SentimentDataStore:
 
         avg_score = self._store["sentiment_score"].mean()
         print(
-            f"✅ Sentiment Analysis Complete. Average Compound Score: {avg_score:.4f}"
+            f"\n✅ Sentiment Analysis Complete. Average Compound Score: {avg_score:.4f}"
         )
 
     def detect_and_handle_nulls(self):
@@ -214,7 +214,7 @@ class SentimentDataStore:
 
         dropped_count = initial_count - len(self._store)
         if dropped_count > 0:
-            print(f"⚠️ Dropped {dropped_count} rows due to null Text or Date.")
+            print(f"\n⚠️ Dropped {dropped_count} rows due to null Text or Date.")
 
     def detect_and_handle_outliers(self):
         """
@@ -253,7 +253,7 @@ class SentimentDataStore:
             self._store = self._store.loc[~mask].reset_index(drop=True)
 
         print(
-            f"🧹 Outlier Detection Complete. Removed {outlier_count} outliers (Z-Score > 2.5)."
+            f"\n🧹 Outlier Detection Complete. Removed {outlier_count} outliers (Z-Score > 2.5)."
         )
 
 
@@ -301,8 +301,8 @@ class SentimentAggregateDataStore:
         self._sentiment_aggregate_df = merged
 
         print(
-            f"✅ Aggregation Complete. Generated {len(self._sentiment_aggregate_df)} daily records."
+            f"\n✅ Aggregation Complete. Generated {len(self._sentiment_aggregate_df)} daily records."
         )
         print(
-            f"📅 Date Range: {self._sentiment_aggregate_df['aggregate_date'].min()} to {self._sentiment_aggregate_df['aggregate_date'].max()}"
+            f"\n📅 Date Range: {self._sentiment_aggregate_df['aggregate_date'].min()} to {self._sentiment_aggregate_df['aggregate_date'].max()}"
         )
