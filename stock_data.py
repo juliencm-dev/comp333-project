@@ -13,6 +13,11 @@ class StockDataStore:
         self._store: Optional[pd.DataFrame] = None
 
     @property
+    def raw(self):
+        """Get the raw stock data DataFrame."""
+        return self._raw
+
+    @property
     def data(self):
         """Get the stock data DataFrame."""
         return self._store
@@ -22,8 +27,9 @@ class StockDataStore:
         """Get the outliers DataFrame."""
         return self._outliers
 
-    def load_from_csv(self, file_path):
+    def load_stock_data(self):
         """Load stock data from a CSV file. CSV is coming from Nasdaq historical data export."""
+        file_path = f"data/stock/{self.ticker}_historical.csv"
         self._raw = pd.read_csv(file_path, parse_dates=["Date"])
         self._raw["Ticker"] = self.ticker
 
@@ -33,6 +39,16 @@ class StockDataStore:
         # Convert currency columns to float
         for col in ["Open", "High", "Low", "Close"]:
             self._convert_currency_to_float(col)
+
+    def label_data(self):
+        """Label Stock Data with "UP or "DOWN" based on previous day's Close price."""
+        if self._raw is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        self._raw["Label"] = np.where(
+            self._raw["Close"] > self._raw["Close"].shift(1), "UP", "DOWN"
+        )
+        self._raw["Label"].iloc[0] = "NEUTRAL"  # First day has no previous day
 
     def add_simple_features(self):
         """Add very basic helper columns."""

@@ -12,6 +12,11 @@ class SentimentDataStore:
         self._outliers: Optional[pd.DataFrame] = None
 
     @property
+    def raw(self):
+        """Get the raw stock data DataFrame."""
+        return self._store
+
+    @property
     def data(self):
         """Get the stock data DataFrame."""
         return self._store
@@ -22,18 +27,101 @@ class SentimentDataStore:
         return self._outliers
 
     def load_reddit(self):
-        """Placeholder for Reddit data loading method."""
-        raise NotImplementedError("Reddit data loading not implemented yet.")
+        """
+        Load all reddit posts from the data/reddit directory.
+        Concatenates Title and Content, standardizes dates, and filters for Tesla relevance.
+        """
+        dir_path = Path("data/reddit")
+        csv_files = sorted(dir_path.glob("*.csv"))
+        if not csv_files:
+            raise FileNotFoundError(f"No CSV files found in {dir_path}")
 
-    def load_news(self):
-        """Placeholder for News data loading method."""
-        raise NotImplementedError("News data loading not implemented yet.")
+        # Keywords specific to Tesla Motors
+        tesla_keywords = [
+            "Tesla",
+            "TSLA",
+            "Elon Musk",
+            "Musk",
+            "Cybertruck",
+            "Model S",
+            "Model 3",
+            "Model X",
+            "Model Y",
+            "Gigafactory",
+            "Starlink",
+        ]
+
+        # Create a regex pattern: (Tesla|TSLA|Elon Musk|...)
+        # case=False in str.contains handles the case insensitivity
+        keyword_pattern = "|".join(tesla_keywords)
+
+        dfs: list[pd.DataFrame] = []
+
+        for fp in csv_files:
+            df = pd.read_csv(fp)
+
+            # 1. Standardize Date
+            df["date"] = pd.to_datetime(df["post_date"], errors="coerce").dt.strftime(
+                "%Y-%m-%d"
+            )
+
+            # 2. Combine Title and Content
+            df["title"] = df["title"].fillna("")
+            df["content"] = df["content"].fillna("")
+            df["text"] = df["title"] + " " + df["content"]
+
+            # We filter immediately after creating the 'text' column to save processing time
+            # case=False ensures 'tesla', 'TESLA', and 'Tesla' are all caught
+            df = df[df["text"].str.contains(keyword_pattern, case=False, na=False)]
+
+            # If the dataframe is empty after filtering, skip to the next file
+            if df.empty:
+                continue
+
+            # 3. Create Interaction Feature
+            df["interaction"] = df["upvotes"] + df["comments"]
+
+            # 4. Standardize Columns
+            df["ticker"] = self.ticker
+            df["platform"] = "REDDIT"
+
+            # Rename specific columns
+            df = cast(pd.DataFrame, df).rename(columns={"post_id": "id"})
+
+            dfs.append(df)
+
+        if not dfs:
+            print("No relevant Tesla Reddit posts found.")
+            return
+
+        all_df = pd.concat(dfs, ignore_index=True)
+
+        # Select only the columns we need for the ML task
+        keep_cols = ["date", "ticker", "text", "interaction", "platform", "id"]
+
+        # Filter columns
+        all_df = all_df[keep_cols]
+
+        # Merge into main store
+        if self._store is not None:
+            self._store = cast(
+                pd.DataFrame, pd.concat([self._store, all_df], ignore_index=True)
+            )
+        else:
+            self._store = cast(pd.DataFrame, all_df)
+
+        # Deduplicate
+        self._store.sort_values("date", inplace=True)
+        self._store.drop_duplicates(
+            subset=["id", "platform"], inplace=True, keep="first"
+        )
+        self._store.reset_index(drop=True, inplace=True)
 
     def load_tweets(self):
         """
         Load all tweets from the raw_tweets directory. Format Date and Keep desired columns.
         """
-        dir_path = Path("raw_tweets")
+        dir_path = Path("data/tweets")
         csv_files = sorted(dir_path.glob("*.csv"))
         if not csv_files:
             raise FileNotFoundError(f"No CSV files found in {dir_path}")
@@ -59,21 +147,26 @@ class SentimentDataStore:
                 dt1[mask] = dt2
 
             df["Date"] = dt1.dt.strftime("%Y-%m-%d")
-            df["Ticker"] = self.ticker
-            df["Platform"] = "Social Media" if count % 2 == 0 else "News"
+            df["ticker"] = self.ticker
+            df["platform"] = "TWITTER"
+
+            # Create Interaction Feature
+            df["interaction"] = df["Retweets"] + df["Likes"]
+
+            df.rename(columns={"ID": "id"}, inplace=True)
+            df.rename(columns={"Date": "date"}, inplace=True)
+
             dfs.append(df)
 
         all_df = pd.concat(dfs, ignore_index=True)
 
         keep_cols = [
-            "ID",
-            "Date",
-            "Ticker",
-            "Username",
-            "Text",
-            "Retweets",
-            "Likes",
-            "Platform",
+            "id",
+            "ticker",
+            "date",
+            "text",
+            "interaction",
+            "platform",
         ]
 
         if self._store is not None:
@@ -85,8 +178,8 @@ class SentimentDataStore:
             self._store = cast(pd.DataFrame, all_df[keep_cols].copy())
 
         # Sort by date and drop duplicates tweets with tweet ID
-        self._store.sort_values("Date", inplace=True)
-        self._store.drop_duplicates(subset=["ID"], inplace=True, keep="first")
+        self._store.sort_values("date", inplace=True)
+        self._store.drop_duplicates(subset=["id"], inplace=True, keep="first")
         self._store.reset_index(drop=True, inplace=True)
 
     def process_sentiment_scores(self):
@@ -105,7 +198,12 @@ class SentimentDataStore:
         Handle null values in the stock data.
         Handled by another teammate.
         """
-        pass
+        if self._store is None:
+            raise ValueError("Dataframe is empty. Load data first.")
+
+        # Example: Drop rows with null text or date
+        self._store.dropna(subset=["text", "date"], inplace=True)
+        self._store.reset_index(drop=True, inplace=True)
 
     def detect_outliers(self):
         """
