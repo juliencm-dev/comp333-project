@@ -63,7 +63,8 @@ class StockDataStore:
         self._raw["label"] = np.where(
             self._raw["Close"] > self._raw["Close"].shift(1), "UP", "DOWN"
         )
-        self._raw["label"].iloc[0] = "NEUTRAL"  # First day has no previous day
+
+        self._raw.loc[0, "label"] = "NEUTRAL"  # First day has no previous day
 
         up_count = (self._raw["label"] == "UP").sum()
         down_count = (self._raw["label"] == "DOWN").sum()
