@@ -153,9 +153,7 @@ class SentimentDataStore:
             # Create Interaction Feature
             df["interaction"] = df["Retweets"] + df["Likes"]
 
-            df.rename(columns={"ID": "id"}, inplace=True)
-            df.rename(columns={"Date": "date"}, inplace=True)
-            df.rename(columns={"Text": "text"}, inplace=True)
+            df = df.rename(columns={"ID": "id", "Date": "date", "Text": "text"})
 
             dfs.append(df)
 
