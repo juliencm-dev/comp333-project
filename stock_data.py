@@ -46,13 +46,13 @@ class StockDataStore:
 
             self.add_simple_features()
 
-            print(f"\n✅ Stock Data Loaded. Total Rows: {len(self._raw)}")
+            print(f"\n Stock Data Loaded. Total Rows: {len(self._raw)}")
             print(
-                f"\n📅 Date Range: {self._raw['Date'].min().date()} to {self._raw['Date'].max().date()}"
+                f"\n Date Range: {self._raw['Date'].min().date()} to {self._raw['Date'].max().date()}"
             )
 
         except FileNotFoundError:
-            print(f"❌ Error: File not found at {file_path}")
+            print(f" Error: File not found at {file_path}")
             raise
 
     def label_data(self):
@@ -68,7 +68,7 @@ class StockDataStore:
 
         up_count = (self._raw["label"] == "UP").sum()
         down_count = (self._raw["label"] == "DOWN").sum()
-        print(f"\n🏷️ Data Labeled. UP: {up_count}, DOWN: {down_count}")
+        print(f"\n Data Labeled. UP: {up_count}, DOWN: {down_count}")
 
     def add_simple_features(self):
         """Add very basic helper columns."""
@@ -112,10 +112,10 @@ class StockDataStore:
         if self._outliers is not None:
             print(f"\n🧹 Outlier Detection Complete. Removed {removed_count} rows.")
             print(
-                f"\n📋 Outlier Reasons:\n{self._outliers['outlier_desc'].value_counts().to_string()}"
+                f"\n Outlier Reasons:\n{self._outliers['outlier_desc'].value_counts().to_string()}"
             )
         else:
-            print("\n✅ No outliers detected.")
+            print("\n No outliers detected.")
 
     def detect_inconsistencies(self):
         """Drop rows where OHLC relationship is impossible."""
@@ -211,7 +211,7 @@ class StockDataStore:
             null_count = self._raw[cols_to_fix].isna().sum().sum()
             if null_count > 0:
                 print(
-                    f"\n⚠️ Found {null_count} missing price values. Applying Forward Fill."
+                    f"\n Found {null_count} missing price values. Applying Forward Fill."
                 )
                 self._raw[cols_to_fix] = self._raw[cols_to_fix].ffill()
                 self._raw[cols_to_fix] = self._raw[cols_to_fix].bfill()
@@ -220,7 +220,7 @@ class StockDataStore:
         if "Volume" in self._raw.columns:
             vol_nulls = self._raw["Volume"].isna().sum()
             if vol_nulls > 0:
-                print(f"\n⚠️ Found {vol_nulls} missing Volume values. Filling with 0.")
+                print(f"\n Found {vol_nulls} missing Volume values. Filling with 0.")
                 self._raw["Volume"] = self._raw["Volume"].fillna(0)
 
     def finalize(self):
@@ -228,7 +228,7 @@ class StockDataStore:
         if self._raw is None:
             raise ValueError("Dataframe is empty. Load data first.")
         self._store = self._raw.copy()
-        print("\n✅ Stock Data Store Finalized.")
+        print("\n Stock Data Store Finalized.")
 
     def _convert_currency_to_float(self, column: str):
         """Convert currency formatted strings to float in the specified column."""
@@ -299,7 +299,7 @@ class DailyIndicatorStore:
         # Reset index so it's a clean daily table
         ind = ind.reset_index(drop=True)
         self._raw = ind
-        print(f"\n✅ Indicators Calculated. Columns: {list(self._raw.columns)}")
+        print(f"\n Indicators Calculated. Columns: {list(self._raw.columns)}")
 
     def normalize_indicators(self):
         """
@@ -368,7 +368,7 @@ class DailyIndicatorStore:
         ]
 
         self._store = cast(pd.DataFrame, ind[keep_cols].copy())
-        print(f"\n✅ Normalization Complete. Final Feature Set: {keep_cols[2:]}")
+        print(f"\n Normalization Complete. Final Feature Set: {keep_cols[2:]}")
 
     def _calculate_rsi(self, series: pd.Series, window: int = 14) -> pd.Series:
         # Use Wilder's RSI with EMA smoothing to avoid big NaN runs
